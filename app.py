@@ -378,7 +378,7 @@ def reset_all():
 # ============================================================================
 # Gradio Interface
 # ============================================================================
-with gr.Blocks(title="Representative Paper Finder") as demo:
+with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css) as demo:
 
     gr.HTML("""
         <div class="main-header">
@@ -483,4 +483,4 @@ with gr.Blocks(title="Representative Paper Finder") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(theme=theme, css=custom_css)
+    demo.launch()
