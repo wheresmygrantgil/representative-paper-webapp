@@ -11,12 +11,18 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Suppress ONNX Runtime GPU warnings before import
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import gradio as gr
 import numpy as np
 import onnxruntime as ort
 import requests
 from sklearn.metrics.pairwise import cosine_distances
 from transformers import AutoTokenizer
+
+# Set ONNX Runtime logging level to ERROR to suppress warnings
+ort.set_default_logger_severity(3)
 
 
 # ============================================================================
@@ -172,8 +178,12 @@ def get_onnx_session():
     """Load the quantized ONNX model."""
     global onnx_session
     if onnx_session is None:
+        # Configure session options for CPU-only execution
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         onnx_session = ort.InferenceSession(
             MODEL_PATH,
+            sess_options=sess_options,
             providers=["CPUExecutionProvider"]
         )
     return onnx_session
