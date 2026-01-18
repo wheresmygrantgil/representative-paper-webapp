@@ -343,8 +343,8 @@ def search_and_show(name: str):
     result = search_authors(name)
     has_results = result.get("choices") and len(result["choices"]) > 0
     if has_results:
-        return result, gr.update(visible=False), gr.update(visible=True)
-    return result, gr.update(visible=True), gr.update(visible=False)
+        return result, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
+    return result, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
 
 def confirm_author(author_id):
@@ -357,6 +357,10 @@ def show_loading():
     return gr.update(value="⏳ *Analyzing publications... This may take a moment.*", visible=True)
 
 
+def show_search_loading():
+    return gr.update(value="⏳ *Searching...*", visible=True)
+
+
 def find_and_show(author_id: str, years: int):
     title, abstract = find_representative_paper(author_id, years)
     return gr.update(visible=False), title, abstract, gr.update(visible=False), gr.update(visible=True)
@@ -365,6 +369,7 @@ def find_and_show(author_id: str, years: int):
 def reset_all():
     return (
         gr.update(visible=True),
+        gr.update(visible=False),
         gr.update(visible=False),
         gr.update(visible=False),
         gr.update(visible=False),
@@ -398,6 +403,7 @@ with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css)
             placeholder="e.g., Yann LeCun, Geoffrey Hinton...",
         )
         search_btn = gr.Button("🔍 Search", variant="primary", size="lg")
+        search_status = gr.Markdown(visible=False)
 
     # Step 2: Select Author
     step2 = gr.Group(visible=False)
@@ -448,15 +454,23 @@ with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css)
 
     # Events
     search_btn.click(
+        fn=show_search_loading,
+        inputs=None,
+        outputs=search_status,
+    ).then(
         fn=search_and_show,
         inputs=name_input,
-        outputs=[author_dropdown, step1, step2],
+        outputs=[author_dropdown, step1, step2, search_status],
     )
 
     name_input.submit(
+        fn=show_search_loading,
+        inputs=None,
+        outputs=search_status,
+    ).then(
         fn=search_and_show,
         inputs=name_input,
-        outputs=[author_dropdown, step1, step2],
+        outputs=[author_dropdown, step1, step2, search_status],
     )
 
     confirm_btn.click(
@@ -478,9 +492,10 @@ with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css)
     reset_btn.click(
         fn=reset_all,
         inputs=None,
-        outputs=[step1, step2, step3, step4, status_text, author_dropdown, title_output, abstract_output],
+        outputs=[step1, step2, step3, step4, status_text, search_status, author_dropdown, title_output, abstract_output],
     )
 
 
 if __name__ == "__main__":
-    demo.launch()
+    port = int(os.environ.get("PORT", 7860))
+    demo.launch(server_name="0.0.0.0", server_port=port)
