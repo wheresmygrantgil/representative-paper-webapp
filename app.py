@@ -368,7 +368,7 @@ def find_representative_paper(author_id: str, years: int):
 # ============================================================================
 custom_css = """
 .gradio-container {
-    max-width: 600px !important;
+    max-width: 800px !important;
     margin: auto !important;
 }
 .main-header {
@@ -394,6 +394,12 @@ custom_css = """
     color: #4f46e5;
     font-size: 1rem;
     margin-bottom: 0.5rem;
+}
+.status-message {
+    font-size: 1.1rem;
+    padding: 1rem;
+    text-align: center;
+    color: #4f46e5;
 }
 """
 
@@ -508,7 +514,7 @@ with gr.Blocks(title="Representative Paper Finder") as demo:
             label="Years to look back",
         )
         find_btn = gr.Button("✨ Find", variant="primary", size="lg")
-        status_text = gr.Markdown(visible=False)
+        status_text = gr.Markdown(visible=False, elem_classes=["status-message"])
 
     # Step 4: Results
     step4 = gr.Group(visible=False)
