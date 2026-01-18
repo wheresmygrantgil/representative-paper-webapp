@@ -13,9 +13,10 @@ from pathlib import Path
 
 import gradio as gr
 import numpy as np
+import onnxruntime as ort
 import requests
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_distances
+from transformers import AutoTokenizer
 
 
 # ============================================================================
@@ -159,16 +160,80 @@ def save_embedding(cache_dir: str, item_id: str, vector: np.ndarray) -> None:
 # ============================================================================
 # Global State
 # ============================================================================
-model = None
+onnx_session = None
+tokenizer = None
 client = None
 CACHE_DIR = "embeddings/representative_papers"
+MODEL_PATH = "model/model_quantized.onnx"
+TOKENIZER_NAME = "sentence-transformers/allenai-specter"
 
 
-def get_model():
-    global model
-    if model is None:
-        model = SentenceTransformer("allenai-specter")
-    return model
+def get_onnx_session():
+    """Load the quantized ONNX model."""
+    global onnx_session
+    if onnx_session is None:
+        onnx_session = ort.InferenceSession(
+            MODEL_PATH,
+            providers=["CPUExecutionProvider"]
+        )
+    return onnx_session
+
+
+def get_tokenizer():
+    """Load the HuggingFace tokenizer."""
+    global tokenizer
+    if tokenizer is None:
+        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+    return tokenizer
+
+
+def mean_pooling(last_hidden_state: np.ndarray, attention_mask: np.ndarray) -> np.ndarray:
+    """Apply mean pooling to get sentence embeddings."""
+    # Expand attention mask for broadcasting
+    mask_expanded = np.expand_dims(attention_mask, axis=-1)
+    # Sum embeddings weighted by attention mask
+    sum_embeddings = np.sum(last_hidden_state * mask_expanded, axis=1)
+    # Count non-masked tokens
+    sum_mask = np.clip(np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)
+    return sum_embeddings / sum_mask
+
+
+def encode_texts(texts: list[str]) -> np.ndarray:
+    """Encode texts to embeddings using ONNX model."""
+    session = get_onnx_session()
+    tok = get_tokenizer()
+
+    # Tokenize
+    inputs = tok(
+        texts,
+        padding=True,
+        truncation=True,
+        max_length=512,
+        return_tensors="np"
+    )
+
+    input_ids = inputs["input_ids"]
+    attention_mask = inputs["attention_mask"]
+    # Create token_type_ids if not present (BERT-style models need this)
+    token_type_ids = inputs.get("token_type_ids", np.zeros_like(input_ids))
+
+    # Run inference
+    outputs = session.run(
+        None,
+        {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
+        }
+    )
+
+    # outputs[0] is last_hidden_state
+    last_hidden_state = outputs[0]
+
+    # Apply mean pooling
+    embeddings = mean_pooling(last_hidden_state, attention_mask)
+
+    return embeddings
 
 
 def get_client():
@@ -250,7 +315,6 @@ def find_representative_paper(author_id: str, years: int):
         return "Please search and select an author first.", ""
 
     api = get_client()
-    embedder = get_model()
 
     try:
         publications = fetch_publications_for_author(
@@ -276,18 +340,32 @@ def find_representative_paper(author_id: str, years: int):
     if not valid_pubs:
         return "No publications with abstracts found.", ""
 
+    # Check cache for each text
     embeddings = []
-    for text in texts:
+    texts_to_encode = []
+    text_indices = []
+
+    for i, text in enumerate(texts):
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         cached = load_embedding(CACHE_DIR, text_hash)
         if cached is not None:
-            embeddings.append(cached)
+            embeddings.append((i, cached))
         else:
-            vec = embedder.encode([text], show_progress_bar=False)[0]
-            save_embedding(CACHE_DIR, text_hash, vec)
-            embeddings.append(vec)
+            texts_to_encode.append(text)
+            text_indices.append(i)
 
-    embeddings = np.vstack(embeddings)
+    # Encode all uncached texts in one batch
+    if texts_to_encode:
+        new_embeddings = encode_texts(texts_to_encode)
+        for idx, (text_idx, text) in enumerate(zip(text_indices, texts_to_encode)):
+            vec = new_embeddings[idx]
+            text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            save_embedding(CACHE_DIR, text_hash, vec)
+            embeddings.append((text_idx, vec))
+
+    # Sort by original index and extract vectors
+    embeddings.sort(key=lambda x: x[0])
+    embeddings = np.vstack([vec for _, vec in embeddings])
 
     medoid_idx = compute_medoid(embeddings)
     representative = valid_pubs[medoid_idx]
