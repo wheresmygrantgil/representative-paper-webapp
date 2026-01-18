@@ -3,4 +3,3 @@ onnxruntime
 transformers
 numpy
 requests
-scikit-learn

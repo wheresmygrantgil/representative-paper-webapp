@@ -5,6 +5,7 @@ Find a researcher's most representative publication using AI-powered semantic an
 Uses OpenAlex API for publication data and SPECTER embeddings for similarity.
 """
 
+import gc
 import hashlib
 import os
 import time
@@ -18,8 +19,10 @@ import gradio as gr
 import numpy as np
 import onnxruntime as ort
 import requests
-from sklearn.metrics.pairwise import cosine_distances
 from transformers import AutoTokenizer
+
+# Maximum papers to process due to memory constraints
+MAX_PAPERS = 25
 
 # Set ONNX Runtime logging level to ERROR to suppress warnings
 ort.set_default_logger_severity(3)
@@ -208,42 +211,47 @@ def mean_pooling(last_hidden_state: np.ndarray, attention_mask: np.ndarray) -> n
     return sum_embeddings / sum_mask
 
 
-def encode_texts(texts: list[str]) -> np.ndarray:
-    """Encode texts to embeddings using ONNX model."""
+def encode_texts(texts: list[str], batch_size: int = 6) -> np.ndarray:
+    """Encode texts to embeddings using ONNX model with micro-batching."""
     session = get_onnx_session()
     tok = get_tokenizer()
+    out = []
 
-    # Tokenize
-    inputs = tok(
-        texts,
-        padding=True,
-        truncation=True,
-        max_length=512,
-        return_tensors="np"
-    )
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
 
-    input_ids = inputs["input_ids"]
-    attention_mask = inputs["attention_mask"]
-    # Create token_type_ids if not present (BERT-style models need this)
-    token_type_ids = inputs.get("token_type_ids", np.zeros_like(input_ids))
+        # Tokenize with reduced max_length for memory savings
+        inputs = tok(
+            batch,
+            padding=True,
+            truncation=True,
+            max_length=256,
+            return_tensors="np"
+        )
 
-    # Run inference
-    outputs = session.run(
-        None,
-        {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "token_type_ids": token_type_ids,
-        }
-    )
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        token_type_ids = inputs.get("token_type_ids", np.zeros_like(input_ids))
 
-    # outputs[0] is last_hidden_state
-    last_hidden_state = outputs[0]
+        # Run inference
+        last_hidden_state = session.run(
+            None,
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
+            }
+        )[0]
 
-    # Apply mean pooling
-    embeddings = mean_pooling(last_hidden_state, attention_mask)
+        # Apply mean pooling and convert to float32
+        emb = mean_pooling(last_hidden_state, attention_mask).astype(np.float32)
+        out.append(emb)
 
-    return embeddings
+        # Release memory immediately
+        del inputs, input_ids, attention_mask, token_type_ids, last_hidden_state
+        gc.collect()
+
+    return np.vstack(out)
 
 
 def get_client():
@@ -311,33 +319,39 @@ def search_authors(name: str):
 
 
 def compute_medoid(vectors: np.ndarray) -> int:
-    """Return the index of the vector that is the medoid."""
+    """Return the index of the vector that is the medoid using pure NumPy."""
     if len(vectors) == 0:
         raise ValueError("No vectors provided")
-    distances = cosine_distances(vectors)
-    medoid_idx = distances.sum(axis=1).argmin()
-    return int(medoid_idx)
+    # Normalize vectors (float32 for memory efficiency)
+    v = vectors.astype(np.float32)
+    v /= (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+    # Compute cosine similarity matrix
+    sim = v @ v.T
+    # Convert to distance
+    dist = 1.0 - sim
+    return int(dist.sum(axis=1).argmin())
 
 
 def find_representative_paper(author_id: str, years: int):
     """Find the most representative paper for a researcher."""
     if not author_id:
-        return "Please search and select an author first.", ""
+        return "Please search and select an author first.", "", ""
 
     api = get_client()
+    info_message = ""
 
     try:
         publications = fetch_publications_for_author(
             api, author_id, years_back=int(years)
         )
     except Exception as e:
-        return f"Error fetching publications: {e}", ""
+        return f"Error fetching publications: {e}", "", ""
 
     if not publications:
-        return "No publications found for this author in the selected time range.", ""
+        return "No publications found for this author in the selected time range.", "", ""
 
+    # Extract valid publications with abstracts
     valid_pubs = []
-    texts = []
     for pub in publications:
         title = pub.get("title", "")
         abstract_inverted = pub.get("abstract_inverted_index")
@@ -345,10 +359,22 @@ def find_representative_paper(author_id: str, years: int):
 
         if title and abstract:
             valid_pubs.append({"title": title, "abstract": abstract})
-            texts.append(f"{title}[SEP]{abstract}")
+
+    # Free memory from raw publications
+    del publications
+    gc.collect()
 
     if not valid_pubs:
-        return "No publications with abstracts found.", ""
+        return "No publications with abstracts found.", "", ""
+
+    # Limit to MAX_PAPERS most recent (already sorted by year desc)
+    total_found = len(valid_pubs)
+    if total_found > MAX_PAPERS:
+        valid_pubs = valid_pubs[:MAX_PAPERS]
+        info_message = f"Note: Found {total_found} papers. Analyzing the {MAX_PAPERS} most recent due to computational limits."
+
+    # Prepare texts for embedding
+    texts = [f"{pub['title']}[SEP]{pub['abstract']}" for pub in valid_pubs]
 
     # Check cache for each text
     embeddings = []
@@ -364,7 +390,7 @@ def find_representative_paper(author_id: str, years: int):
             texts_to_encode.append(text)
             text_indices.append(i)
 
-    # Encode all uncached texts in one batch
+    # Encode uncached texts in micro-batches
     if texts_to_encode:
         new_embeddings = encode_texts(texts_to_encode)
         for idx, (text_idx, text) in enumerate(zip(text_indices, texts_to_encode)):
@@ -373,14 +399,26 @@ def find_representative_paper(author_id: str, years: int):
             save_embedding(CACHE_DIR, text_hash, vec)
             embeddings.append((text_idx, vec))
 
+        # Free memory
+        del new_embeddings, texts_to_encode
+        gc.collect()
+
     # Sort by original index and extract vectors
     embeddings.sort(key=lambda x: x[0])
-    embeddings = np.vstack([vec for _, vec in embeddings])
+    embedding_matrix = np.vstack([vec for _, vec in embeddings])
 
-    medoid_idx = compute_medoid(embeddings)
+    # Free memory
+    del embeddings, texts
+    gc.collect()
+
+    medoid_idx = compute_medoid(embedding_matrix)
     representative = valid_pubs[medoid_idx]
 
-    return representative["title"], representative["abstract"]
+    # Free memory
+    del embedding_matrix
+    gc.collect()
+
+    return representative["title"], representative["abstract"], info_message
 
 
 # ============================================================================
@@ -430,9 +468,10 @@ theme = gr.themes.Soft(
 def search_and_show(name: str):
     result = search_authors(name)
     has_results = result.get("choices") and len(result["choices"]) > 0
+    btn_update = gr.update(interactive=True, value="🔍 Search")
     if has_results:
-        return result, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
-    return result, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+        return result, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), btn_update
+    return result, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), btn_update
 
 
 def confirm_author(author_id):
@@ -446,17 +485,28 @@ def show_loading():
 
 
 def show_search_loading():
-    return gr.update(value="⏳ *Searching...*", visible=True)
+    """Show loading state and disable search button."""
+    return (
+        gr.update(value="⏳ *Searching...*", visible=True),
+        gr.update(interactive=False, value="⏳ Searching...")
+    )
+
+
+def enable_search_button():
+    """Re-enable search button after search completes."""
+    return gr.update(interactive=True, value="🔍 Search")
 
 
 def find_and_show(author_id: str, years: int):
-    title, abstract = find_representative_paper(author_id, years)
-    return gr.update(visible=False), title, abstract, gr.update(visible=False), gr.update(visible=True)
+    title, abstract, info_msg = find_representative_paper(author_id, years)
+    info_update = gr.update(value=info_msg, visible=bool(info_msg))
+    return gr.update(visible=False), title, abstract, info_update, gr.update(visible=False), gr.update(visible=True)
 
 
 def reset_all():
     return (
         gr.update(visible=True),
+        gr.update(visible=False),
         gr.update(visible=False),
         gr.update(visible=False),
         gr.update(visible=False),
@@ -522,6 +572,7 @@ with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css)
     step4 = gr.Group(visible=False)
     with step4:
         gr.Markdown("<p class='step-header'>📄 Result</p>")
+        info_message = gr.Markdown(visible=False)
         title_output = gr.Textbox(
             label="Paper Title",
             interactive=False,
@@ -544,21 +595,21 @@ with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css)
     search_btn.click(
         fn=show_search_loading,
         inputs=None,
-        outputs=search_status,
+        outputs=[search_status, search_btn],
     ).then(
         fn=search_and_show,
         inputs=name_input,
-        outputs=[author_dropdown, step1, step2, search_status],
+        outputs=[author_dropdown, step1, step2, search_status, search_btn],
     )
 
     name_input.submit(
         fn=show_search_loading,
         inputs=None,
-        outputs=search_status,
+        outputs=[search_status, search_btn],
     ).then(
         fn=search_and_show,
         inputs=name_input,
-        outputs=[author_dropdown, step1, step2, search_status],
+        outputs=[author_dropdown, step1, step2, search_status, search_btn],
     )
 
     confirm_btn.click(
@@ -574,13 +625,13 @@ with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css)
     ).then(
         fn=find_and_show,
         inputs=[author_dropdown, years_slider],
-        outputs=[status_text, title_output, abstract_output, step3, step4],
+        outputs=[status_text, title_output, abstract_output, info_message, step3, step4],
     )
 
     reset_btn.click(
         fn=reset_all,
         inputs=None,
-        outputs=[step1, step2, step3, step4, status_text, search_status, author_dropdown, title_output, abstract_output],
+        outputs=[step1, step2, step3, step4, status_text, search_status, info_message, author_dropdown, title_output, abstract_output],
     )
 
 
