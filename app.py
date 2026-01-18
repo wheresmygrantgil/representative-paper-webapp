@@ -9,23 +9,23 @@ import gc
 import hashlib
 import os
 import time
+
+# Load environment variables from .env file (for local development)
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime
 from pathlib import Path
 
-# Suppress ONNX Runtime GPU warnings before import
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
 import gradio as gr
 import numpy as np
-import onnxruntime as ort
 import requests
-from transformers import AutoTokenizer
+from huggingface_hub import InferenceClient
 
 # Maximum papers to process due to memory constraints
 MAX_PAPERS = 25
 
-# Set ONNX Runtime logging level to ERROR to suppress warnings
-ort.set_default_logger_severity(3)
+# SPECTER model for scientific paper embeddings
+SPECTER_MODEL = "sentence-transformers/allenai-specter"
 
 
 # ============================================================================
@@ -169,89 +169,31 @@ def save_embedding(cache_dir: str, item_id: str, vector: np.ndarray) -> None:
 # ============================================================================
 # Global State
 # ============================================================================
-onnx_session = None
-tokenizer = None
 client = None
 CACHE_DIR = "embeddings/representative_papers"
-MODEL_PATH = "model/model_quantized.onnx"
-TOKENIZER_NAME = "sentence-transformers/allenai-specter"
 
 
-def get_onnx_session():
-    """Load the quantized ONNX model."""
-    global onnx_session
-    if onnx_session is None:
-        # Configure session options for CPU-only execution
-        sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        onnx_session = ort.InferenceSession(
-            MODEL_PATH,
-            sess_options=sess_options,
-            providers=["CPUExecutionProvider"]
-        )
-    return onnx_session
+def encode_texts(texts: list[str]) -> np.ndarray:
+    """Get embeddings from HuggingFace Inference API."""
+    hf_token = os.environ.get("HF_TOKEN", "")
+    client = InferenceClient(token=hf_token if hf_token else None)
 
+    # Process in batches to avoid API limits
+    all_embeddings = []
+    for i in range(0, len(texts), 8):
+        batch = texts[i:i + 8]
+        # feature_extraction returns token embeddings, we need to mean pool
+        for text in batch:
+            embeddings = client.feature_extraction(text, model=SPECTER_MODEL)
+            # Mean pooling over tokens (embeddings shape: [seq_len, hidden_dim])
+            emb_array = np.array(embeddings)
+            if emb_array.ndim == 2:
+                pooled = np.mean(emb_array, axis=0)
+            else:
+                pooled = emb_array
+            all_embeddings.append(pooled)
 
-def get_tokenizer():
-    """Load the HuggingFace tokenizer."""
-    global tokenizer
-    if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
-    return tokenizer
-
-
-def mean_pooling(last_hidden_state: np.ndarray, attention_mask: np.ndarray) -> np.ndarray:
-    """Apply mean pooling to get sentence embeddings."""
-    # Expand attention mask for broadcasting
-    mask_expanded = np.expand_dims(attention_mask, axis=-1)
-    # Sum embeddings weighted by attention mask
-    sum_embeddings = np.sum(last_hidden_state * mask_expanded, axis=1)
-    # Count non-masked tokens
-    sum_mask = np.clip(np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)
-    return sum_embeddings / sum_mask
-
-
-def encode_texts(texts: list[str], batch_size: int = 6) -> np.ndarray:
-    """Encode texts to embeddings using ONNX model with micro-batching."""
-    session = get_onnx_session()
-    tok = get_tokenizer()
-    out = []
-
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-
-        # Tokenize with reduced max_length for memory savings
-        inputs = tok(
-            batch,
-            padding=True,
-            truncation=True,
-            max_length=256,
-            return_tensors="np"
-        )
-
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
-        token_type_ids = inputs.get("token_type_ids", np.zeros_like(input_ids))
-
-        # Run inference
-        last_hidden_state = session.run(
-            None,
-            {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "token_type_ids": token_type_ids,
-            }
-        )[0]
-
-        # Apply mean pooling and convert to float32
-        emb = mean_pooling(last_hidden_state, attention_mask).astype(np.float32)
-        out.append(emb)
-
-        # Release memory immediately
-        del inputs, input_ids, attention_mask, token_type_ids, last_hidden_state
-        gc.collect()
-
-    return np.vstack(out)
+    return np.array(all_embeddings, dtype=np.float32)
 
 
 def get_client():
