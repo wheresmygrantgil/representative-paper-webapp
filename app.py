@@ -10,6 +10,8 @@ import hashlib
 import os
 import time
 
+from fastapi import FastAPI, Response
+
 # Load environment variables from .env file (for local development)
 from dotenv import load_dotenv
 load_dotenv()
@@ -583,6 +585,23 @@ with gr.Blocks(title="Representative Paper Finder") as demo:
     )
 
 
+# ============================================================================
+# FastAPI App with Health Check Endpoint (for cron-job.org keep-alive)
+# ============================================================================
+app = FastAPI()
+
+
+@app.get("/health")
+def health_check():
+    """Lightweight health check endpoint for keep-alive pings."""
+    return Response(content="OK", media_type="text/plain")
+
+
+# Mount Gradio app
+app = gr.mount_gradio_app(app, demo, path="/", root_path="")
+
+
 if __name__ == "__main__":
+    import uvicorn
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port, theme=theme, css=custom_css)
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -3,3 +3,4 @@ huggingface_hub>=0.33.0
 numpy
 python-dotenv
 requests
+uvicorn
