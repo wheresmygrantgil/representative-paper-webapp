@@ -370,7 +370,7 @@ def find_representative_paper(author_id: str, years: int):
 # ============================================================================
 custom_css = """
 .gradio-container {
-    max-width: 800px !important;
+    max-width: 600px !important;
     margin: auto !important;
 }
 .main-header {
@@ -402,6 +402,14 @@ custom_css = """
     padding: 1rem;
     text-align: center;
     color: #4f46e5;
+    max-width: none !important;
+    width: 100vw !important;
+    position: relative !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    background: #f3f4f6;
+    border-radius: 8px;
+    margin: 0.5rem 0;
 }
 """
 
@@ -471,7 +479,7 @@ def reset_all():
 # ============================================================================
 # Gradio Interface
 # ============================================================================
-with gr.Blocks(title="Representative Paper Finder") as demo:
+with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css) as demo:
 
     gr.HTML("""
         <div class="main-header">
