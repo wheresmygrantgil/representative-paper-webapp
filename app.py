@@ -369,46 +369,192 @@ def find_representative_paper(author_id: str, years: int):
 # UI Configuration
 # ============================================================================
 custom_css = """
-.gradio-container {
-    max-width: 800px !important;
-    margin: auto !important;
+/* Dark background for entire page */
+body, .gradio-container {
+    background-color: #0f1419 !important;
 }
+
+.gradio-container {
+    max-width: 600px !important;
+    margin: auto !important;
+    padding-top: 2rem !important;
+}
+
+/* Main header styling */
 .main-header {
     text-align: center;
-    margin-bottom: 1rem;
-}
-.main-header h1 {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-size: 2rem;
-    font-weight: 700;
     margin-bottom: 0.5rem;
 }
+
+.main-header h1 {
+    color: #9580ff !important;
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
 .subtitle {
     text-align: center;
-    color: #6b7280;
+    color: #8b949e !important;
     font-size: 1rem;
     margin-bottom: 1.5rem;
 }
+
+/* Card/Group styling */
+.gr-group {
+    background-color: #21262d !important;
+    border: 1px solid #30363d !important;
+    border-radius: 12px !important;
+    padding: 1.25rem !important;
+}
+
+/* Step header styling */
 .step-header {
     font-weight: 600;
-    color: #4f46e5;
-    font-size: 1rem;
-    margin-bottom: 0.5rem;
+    color: #9580ff !important;
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
 }
+
+/* Input fields */
+.gr-input, .gr-textbox textarea, .gr-textbox input, input, textarea {
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+    color: #c9d1d9 !important;
+    border-radius: 8px !important;
+}
+
+/* Dropdown styling */
+.gr-dropdown {
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+}
+
+/* Slider styling */
+.gr-slider input[type="range"] {
+    accent-color: #9580ff !important;
+}
+
+/* Primary button styling */
+.gr-button-primary {
+    background: linear-gradient(135deg, #7c6bf0 0%, #9580ff 100%) !important;
+    border: none !important;
+    color: white !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    padding: 0.75rem 1.5rem !important;
+}
+
+.gr-button-primary:hover {
+    background: linear-gradient(135deg, #8b7cf7 0%, #a08fff 100%) !important;
+}
+
+/* Secondary button */
+.gr-button-secondary {
+    background-color: #21262d !important;
+    border: 1px solid #30363d !important;
+    color: #c9d1d9 !important;
+    border-radius: 8px !important;
+}
+
+/* Label styling */
+label, .gr-label {
+    color: #c9d1d9 !important;
+    font-weight: 500 !important;
+}
+
+/* Slider label badge */
+.gr-slider label span {
+    background-color: #7c6bf0 !important;
+    color: white !important;
+    padding: 0.25rem 0.5rem !important;
+    border-radius: 4px !important;
+    font-size: 0.85rem !important;
+}
+
+/* Status message styling */
 .status-message {
-    font-size: 1.1rem;
-    padding: 1rem;
+    font-size: 1rem;
+    padding: 0.75rem;
     text-align: center;
-    color: #4f46e5;
+    color: #f0b429 !important;
+}
+
+/* Footer styling */
+.footer-text {
+    text-align: center;
+    color: #6e7681 !important;
+    margin-top: 1.5rem;
+    font-size: 0.85rem;
+}
+
+/* Dark mode for form elements */
+.dark, [data-theme="dark"] {
+    --body-background-fill: #0f1419 !important;
+    --background-fill-primary: #21262d !important;
+    --background-fill-secondary: #161b22 !important;
+    --border-color-primary: #30363d !important;
+    --color-text-body: #c9d1d9 !important;
+}
+
+/* Number input next to slider */
+.gr-slider input[type="number"] {
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+    color: #c9d1d9 !important;
+    border-radius: 6px !important;
+}
+
+/* Dropdown menu */
+.gr-dropdown ul {
+    background-color: #21262d !important;
+    border: 1px solid #30363d !important;
+}
+
+.gr-dropdown li:hover {
+    background-color: #30363d !important;
+}
+
+/* Fix markdown text color */
+.gr-markdown, .gr-markdown p {
+    color: #c9d1d9 !important;
+}
+
+/* Info message styling */
+.info-message {
+    color: #f0b429 !important;
+    font-style: italic;
 }
 """
 
-theme = gr.themes.Soft(
-    primary_hue="indigo",
+theme = gr.themes.Base(
+    primary_hue="purple",
     secondary_hue="purple",
+    neutral_hue="slate",
     font=gr.themes.GoogleFont("Inter"),
+).set(
+    body_background_fill="#0f1419",
+    body_background_fill_dark="#0f1419",
+    block_background_fill="#21262d",
+    block_background_fill_dark="#21262d",
+    block_border_color="#30363d",
+    block_border_color_dark="#30363d",
+    block_label_text_color="#c9d1d9",
+    block_label_text_color_dark="#c9d1d9",
+    block_title_text_color="#c9d1d9",
+    block_title_text_color_dark="#c9d1d9",
+    input_background_fill="#161b22",
+    input_background_fill_dark="#161b22",
+    input_border_color="#30363d",
+    input_border_color_dark="#30363d",
+    button_primary_background_fill="linear-gradient(135deg, #7c6bf0 0%, #9580ff 100%)",
+    button_primary_background_fill_dark="linear-gradient(135deg, #7c6bf0 0%, #9580ff 100%)",
+    button_primary_text_color="white",
+    button_primary_text_color_dark="white",
+    body_text_color="#c9d1d9",
+    body_text_color_dark="#c9d1d9",
+    color_accent_soft="#9580ff",
+    color_accent_soft_dark="#9580ff",
 )
 
 
@@ -471,11 +617,11 @@ def reset_all():
 # ============================================================================
 # Gradio Interface
 # ============================================================================
-with gr.Blocks(title="Representative Paper Finder") as demo:
+with gr.Blocks(title="Representative Paper Finder", theme=theme, css=custom_css) as demo:
 
     gr.HTML("""
         <div class="main-header">
-            <h1>📚 Representative Paper Finder</h1>
+            <h1>📁 Representative Paper Finder</h1>
         </div>
     """)
     gr.Markdown(
@@ -535,10 +681,8 @@ with gr.Blocks(title="Representative Paper Finder") as demo:
         )
         reset_btn = gr.Button("🔄 Start Over", variant="secondary", size="lg")
 
-    gr.Markdown(
-        "<p style='text-align: center; color: #9ca3af; margin-top: 1.5rem; font-size: 0.8rem;'>"
-        "Powered by OpenAlex & SPECTER"
-        "</p>"
+    gr.HTML(
+        "<p class='footer-text'>Powered by OpenAlex & SPECTER</p>"
     )
 
     # Events
