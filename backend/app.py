@@ -9,11 +9,9 @@ Deploy to Render with HF_TOKEN environment variable.
 """
 
 import gc
-import hashlib
 import os
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -29,7 +27,6 @@ from huggingface_hub import InferenceClient
 MAX_PAPERS = 25
 SPECTER_MODEL = "sentence-transformers/allenai-specter"
 OPENALEX_BASE = "https://api.openalex.org"
-CACHE_DIR = "embeddings/representative_papers"
 
 # ============================================================================
 # FastAPI App
@@ -228,25 +225,6 @@ def fetch_publications_for_author(
 # ============================================================================
 # Embedding Functions
 # ============================================================================
-def _ensure_dir(path: str) -> None:
-    Path(path).mkdir(parents=True, exist_ok=True)
-
-
-def load_embedding(cache_dir: str, item_id: str):
-    path = os.path.join(cache_dir, f"{item_id}.npy")
-    if os.path.exists(path):
-        return np.load(path)
-    return None
-
-
-def save_embedding(cache_dir: str, item_id: str, vector: np.ndarray) -> None:
-    try:
-        _ensure_dir(cache_dir)
-        np.save(os.path.join(cache_dir, f"{item_id}.npy"), vector)
-    except Exception:
-        pass
-
-
 def encode_texts(texts: list[str]) -> np.ndarray:
     """Get embeddings from HuggingFace Inference API."""
     hf_token = os.environ.get("HF_TOKEN", "")
@@ -358,40 +336,13 @@ def find_representative_paper(request: FindRequest):
     # Prepare texts for embedding
     texts = [f"{pub['title']}[SEP]{pub['abstract']}" for pub in valid_pubs]
 
-    # Check cache and encode
-    embeddings = []
-    texts_to_encode = []
-    text_indices = []
+    # Get embeddings from HuggingFace
+    try:
+        embedding_matrix = encode_texts(texts)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")
 
-    for i, text in enumerate(texts):
-        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        cached = load_embedding(CACHE_DIR, text_hash)
-        if cached is not None:
-            embeddings.append((i, cached))
-        else:
-            texts_to_encode.append(text)
-            text_indices.append(i)
-
-    if texts_to_encode:
-        try:
-            new_embeddings = encode_texts(texts_to_encode)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")
-
-        for idx, (text_idx, text) in enumerate(zip(text_indices, texts_to_encode)):
-            vec = new_embeddings[idx]
-            text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            save_embedding(CACHE_DIR, text_hash, vec)
-            embeddings.append((text_idx, vec))
-
-        del new_embeddings, texts_to_encode
-        gc.collect()
-
-    # Sort by original index and extract vectors
-    embeddings.sort(key=lambda x: x[0])
-    embedding_matrix = np.vstack([vec for _, vec in embeddings])
-
-    del embeddings, texts
+    del texts
     gc.collect()
 
     medoid_idx = compute_medoid(embedding_matrix)
